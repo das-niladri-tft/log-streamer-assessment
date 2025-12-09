@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	filePath     string
-	initialLines int
+	filePath        string
+	initialLines    int
+	ServerStartTime time.Time
 )
 
 const (
@@ -81,25 +82,40 @@ func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) {
 	go client.ReadPump()
 }
 
+func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientCount, linesStreamed := hub.GetMetrics()
+
+	uptime := time.Since(ServerStartTime)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	fmt.Fprintf(w, "Connected Clients: %d\n", clientCount)
+	fmt.Fprintf(w, "Total Lines Streamed: %d\n", linesStreamed)
+	fmt.Fprintf(w, "Server uptime: %d\n", int64(uptime.Seconds()))
+}
+
 func main() {
-	// Parse command-line arguments
 	flag.StringVar(&filePath, "file", "sample.log", "Path to the log file to tail (required)")
 	flag.IntVar(&initialLines, "lines", 10, "Number of initial lines to send (default: 10)")
 	port := flag.Int("port", 8080, "Port to listen on (default: 8080)")
 	flag.Parse()
 
-	// Validate arguments
 	if filePath == "" {
 		fmt.Println("Error: -file argument is required")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		log.Fatalf("Error: File does not exist: %s", filePath)
 	}
-	// Convert relative path to absolute path for reliable file watching
+
 	absPath, err := filepath.Abs(filePath)
 	if err == nil {
 		filePath = absPath
@@ -110,24 +126,23 @@ func main() {
 	log.Printf("Initial lines: %d", initialLines)
 	log.Printf("Port: %d", *port)
 
-	// 1. Initialize broadcaster and start it in a goroutine
+	// Initialize broadcaster and start it in a goroutine
 	hub := broadcaster.NewHub()
 	go hub.Broadcast()
 
-	// 2. Start file watcher in a goroutine
+	//Start file watcher in a goroutine
 	go fileWatcher.FileWatcher(hub, filePath, pollInterval)
 
-	// 3. Set up HTTP routes for "/" and "/ws"
+	// HTTP routes
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWS(hub, w, r)
 	})
-	// simple favicon handler to avoid 404 noise from browsers
-	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		serveMetrics(hub, w, r)
 	})
 
-	// 4. Start HTTP server
+	// Start HTTP server
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("Server starting on http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
