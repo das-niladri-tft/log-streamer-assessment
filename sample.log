@@ -1,0 +1,15 @@
+2025-01-13 10:00:00 INFO Server started successfully
+2025-01-13 10:00:01 INFO Loading configuration from config.yaml
+2025-01-13 10:00:02 INFO Database connection established
+2025-01-13 10:00:03 INFO Cache initialized with 1000 entries
+2025-01-13 10:00:04 INFO API server listening on port 8080
+2025-01-13 10:00:05 DEBUG Registered route: GET /api/users
+2025-01-13 10:00:06 DEBUG Registered route: POST /api/users
+2025-01-13 10:00:07 DEBUG Registered route: GET /api/products
+2025-01-13 10:00:08 INFO Authentication middleware enabled
+2025-01-13 10:00:09 INFO Rate limiting enabled: 100 req/min
+2025-01-13 10:00:10 INFO Background job scheduler started
+2025-01-13 10:00:11 DEBUG Scheduled job: cleanup_temp_files (every 1h)
+2025-01-13 10:00:12 DEBUG Scheduled job: send_daily_reports (daily at 9am)
+2025-01-13 10:00:13 INFO WebSocket server initialized
+2025-01-13 10:00:14 INFO All systems operational
