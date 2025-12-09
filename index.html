@@ -246,7 +246,13 @@
         };
 
         ws.onmessage = function (event) {
-          addLogLine(event.data);
+          // Always split incoming messages by newline
+          const lines = event.data.split('\n');
+          lines.forEach(line => {
+            if (line.length > 0) {
+              addLogLine(line);
+            }
+          });
         };
 
         ws.onclose = function (event) {
@@ -271,6 +277,7 @@
       clearBtn.addEventListener("click", clearLogs);
       pauseBtn.addEventListener("click", togglePause);
       reconnectBtn.addEventListener("click", reconnect);
+      connect();
     </script>
   </body>
 </html>
