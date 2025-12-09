@@ -45,7 +45,6 @@ func FileWatcher(hub *broadcaster.Hub, path string, interval time.Duration) {
 	}
 }
 
-// ReadLastNLines reads the last N lines of a file efficiently.
 func ReadLastNLines(path string, n int) []string {
 	log.Printf("FilePath: %s", path)
 
@@ -71,9 +70,9 @@ func ReadLastNLines(path string, n int) []string {
 
 	var lines []string
 	var lineCount int
-	var startPos int64 = 0 // The calculated position to start reading from
+	var startPos int64 = 0
 
-	// 1. Scan backward byte by byte to find the starting position (offset) of the N-th line
+	// Scan backward byte by byte to find the starting position (offset) of the N-th line
 	for cursor := fileSize - 1; cursor >= 0; cursor-- {
 		// Seek and read one byte
 		file.Seek(cursor, io.SeekStart)
@@ -94,7 +93,7 @@ func ReadLastNLines(path string, n int) []string {
 		}
 	}
 
-	// 2. Explicitly seek to the determined start position
+	// Explicitly seek to the determined start position
 	// This ensures the bufio.Reader starts from the correct byte offset.
 	_, err = file.Seek(startPos, io.SeekStart)
 	if err != nil {

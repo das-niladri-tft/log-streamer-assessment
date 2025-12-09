@@ -15,15 +15,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// --- Command Line Arguments ---
 var (
 	filePath     string
 	initialLines int
 )
 
-// --- Constants ---
 const (
-	// File polling interval as recommended in README.
 	pollInterval = 500 * time.Millisecond
 )
 
@@ -35,142 +32,8 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// --- Component 1: Broadcaster (Hub) ---
-
-// // Hub maintains the set of active clients and broadcasts messages.
-// type Hub struct {
-// 	// Registered clients.
-// 	clients map[*Client]bool
-
-// 	// Inbound messages from the file watcher.
-// 	broadcast chan []byte
-
-// 	// Register requests from the clients.
-// 	register chan *Client
-
-// 	// Unregister requests from clients.
-// 	unregister chan *Client
-// }
-
-// func newHub() *Hub {
-// 	return &Hub{
-// 		broadcast:  make(chan []byte),
-// 		register:   make(chan *Client),
-// 		unregister: make(chan *Client),
-// 		clients:    make(map[*Client]bool),
-// 	}
-// }
-
-// func (h *Hub) run() {
-// 	for {
-// 		select {
-// 		case client := <-h.register:
-// 			h.clients[client] = true
-// 			log.Printf("Client registered. Total clients: %d", len(h.clients))
-// 		case client := <-h.unregister:
-// 			if _, ok := h.clients[client]; ok {
-// 				delete(h.clients, client)
-// 				close(client.send)
-// 				log.Printf("Client unregistered. Total clients: %d", len(h.clients))
-// 			}
-// 		case message := <-h.broadcast:
-// 			for client := range h.clients {
-// 				select {
-// 				case client.send <- message:
-// 				default:
-// 					// If sending fails (client buffer full), unregister and close
-// 					close(client.send)
-// 					delete(h.clients, client)
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-
-// --- Component 2: Client Handler ---
-
-// // Client is a middleman between the websocket connection and the hub.
-// type Client struct {
-// 	hub *Hub
-// 	// The websocket connection.
-// 	conn *websocket.Conn
-// 	// Buffered channel of outbound messages.
-// 	send chan []byte
-// }
-
-// var upgrader = websocket.Upgrader{
-// 	ReadBufferSize:  1024,
-// 	WriteBufferSize: 1024,
-// 	CheckOrigin: func(r *http.Request) bool {
-// 		return true // Allow cross-origin for local testing
-// 	},
-// }
-
-// // readPump reads messages from the websocket connection (primarily for disconnects).
-// func (c *Client) readPump() {
-// 	defer func() {
-// 		c.hub.unregister <- c
-// 		c.conn.Close()
-// 	}()
-// 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-// 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
-// 	for {
-// 		// Read message to detect closed connection/error from the client side
-// 		_, _, err := c.conn.ReadMessage()
-// 		if err != nil {
-// 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-// 				log.Printf("Error reading from client: %v", err)
-// 			}
-// 			break
-// 		}
-// 	}
-// }
-
-// // writePump pumps messages from the hub to the websocket connection.
-// func (c *Client) writePump() {
-// 	ticker := time.NewTicker(pingPeriod)
-// 	defer func() {
-// 		ticker.Stop()
-// 		c.conn.Close()
-// 	}()
-// 	for {
-// 		select {
-// 		case message, ok := <-c.send:
-// 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-// 			if !ok {
-// 				// The hub closed the channel.
-// 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-// 				return
-// 			}
-
-// 			w, err := c.conn.NextWriter(websocket.TextMessage)
-// 			if err != nil {
-// 				return
-// 			}
-// 			w.Write(message)
-
-// 			// Send additional queued messages (burst handling)
-// 			n := len(c.send)
-// 			for i := 0; i < n; i++ {
-// 				w.Write([]byte("\n"))
-// 				w.Write(<-c.send)
-// 			}
-
-// 			if err := w.Close(); err != nil {
-// 				return
-// 			}
-// 		case <-ticker.C:
-// 			// Send a periodic ping message
-// 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-// 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-// 				return
-// 			}
-// 		}
-// 	}
-// }
-
 // HTTP:
-// serveHome serves the index.html file (Required feature)
+// serveHome serves the index.html file
 func serveHome(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
@@ -190,18 +53,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 		w.Write(content)
 	} else {
 		// Fallback for when the file isn't in the execution path
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `
-			<!DOCTYPE html>
-			<html lang="en">
-			<head><title>Log Viewer</title></head>
-			<body>
-				<h1>Log Streamer</h1>
-				<p>Error: Could not read index.html file. Ensure it is in the execution directory.</p>
-				<p>Websocket endpoint is ready at /ws</p>
-			</body>
-			</html>
-		`)
+		http.Error(w, "index.html not found. Check the execution path.", http.StatusInternalServerError)
 	}
 }
 
