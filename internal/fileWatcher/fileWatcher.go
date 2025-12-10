@@ -2,17 +2,20 @@ package fileWatcher
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"log"
 	"log-streamer/internal/broadcaster"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 // FileWatcher polls the file for new content and broadcasts it.
-func FileWatcher(hub *broadcaster.Hub, path string, interval time.Duration) {
+func FileWatcher(hub *broadcaster.Hub, path string, interval time.Duration, patternRegex *regexp.Regexp) {
 	var offset int64
 	var mu sync.Mutex
 
@@ -27,7 +30,7 @@ func FileWatcher(hub *broadcaster.Hub, path string, interval time.Duration) {
 	for {
 		time.Sleep(interval)
 
-		lines, newOffset, err := readNewLines(path, offset)
+		lines, newOffset, err := readNewLines(path, offset, patternRegex)
 		if err != nil {
 			log.Printf("Error watching file: %v", err)
 			continue
@@ -45,87 +48,82 @@ func FileWatcher(hub *broadcaster.Hub, path string, interval time.Duration) {
 	}
 }
 
-func ReadLastNLines(path string, n int) []string {
-	log.Printf("FilePath: %s", path)
-
+func ReadLastNLines(path string, n int, patternRegex *regexp.Regexp) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		log.Printf("Error opening file for history: %v", err)
-		return nil
+		return nil, errors.Wrap(err, "FileWatcher:ReadLastNLines:Error opening file for history")
 	}
 	defer file.Close()
 
 	fileInfo, err := file.Stat()
 	if err != nil {
-		log.Printf("Error stating file for history: %v", err)
-		return nil
+		return nil, errors.Wrap(err, "FileWatcher:ReadLastNLines:Error stating file for history")
 	}
+
 	fileSize := fileInfo.Size()
-
-	log.Print("FileSize: ", fileSize)
-
 	if fileSize == 0 {
-		return nil
+		return nil, nil
 	}
 
-	var lines []string
-	var lineCount int
-	var startPos int64 = 0
+	var (
+		lines     []string
+		lineCount int
+		startPos  int64 = 0
+	)
 
-	// Scan backward byte by byte to find the starting position (offset) of the N-th line
+	// Scan backward byte by byte to find the starting position of the N-th line
 	for cursor := fileSize - 1; cursor >= 0; cursor-- {
-		// Seek and read one byte
 		file.Seek(cursor, io.SeekStart)
 		buf := make([]byte, 1)
 		file.Read(buf)
 
 		if buf[0] == '\n' {
 			lineCount++
+			// Check if n-th line found
 			if lineCount == n {
-				startPos = cursor + 1 // Start reading immediately after the N-th newline
+				startPos = cursor + 1
 				break
 			}
 		}
-		// If we reach the start of the file before finding N newlines, start at 0
+
 		if cursor == 0 {
 			startPos = 0
 			break
 		}
 	}
 
-	// Explicitly seek to the determined start position
-	// This ensures the bufio.Reader starts from the correct byte offset.
+	// Explicitly seek to the determined start position to ensure the bufio.Reader starts from the correct byte offset
 	_, err = file.Seek(startPos, io.SeekStart)
 	if err != nil {
-		log.Printf("Error seeking file to start position %d: %v", startPos, err)
-		return nil
+		return nil, errors.Wrapf(err, "FileWatcher:ReadLastNLines:Error seeking file for history. StartPos: %d", startPos)
 	}
 
-	// 3. Read lines from the start position to EOF
+	// Read lines from the start position to EOF
 	reader := bufio.NewReader(file)
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
-			// Remove trailing newline if present and add to list
-			if line[len(line)-1] == '\n' {
-				line = line[:len(line)-1]
+			line = strings.TrimSpace(line)
+
+			if line != "" {
+				if patternRegex == nil || patternRegex.MatchString(line) {
+					lines = append(lines, line)
+				}
 			}
-			lines = append(lines, line)
-		}
-		if err == io.EOF {
-			break
 		}
 		if err != nil {
-			log.Printf("Error reading history lines: %v", err)
+			if err != io.EOF {
+				return nil, errors.Wrap(err, "FileWatcher:ReadLastNLines:Error reading history lines")
+			}
 			break
 		}
 	}
 
-	return lines
+	return lines, nil
 }
 
 // readNewLines reads content written since the last offset.
-func readNewLines(path string, offset int64) ([]string, int64, error) {
+func readNewLines(path string, offset int64, patternRegex *regexp.Regexp) ([]string, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, offset, err
@@ -138,21 +136,21 @@ func readNewLines(path string, offset int64) ([]string, int64, error) {
 	}
 	currentSize := fileInfo.Size()
 
-	// 1. Handle file truncation/rotation (Required feature)
+	// Handle file truncation/rotation
 	if currentSize < offset {
 		log.Printf("File size decreased (rotation/truncation detected). Resetting offset from %d to 0.", offset)
 		offset = 0
 	}
 
-	// 2. No new content
+	// Return if no new content
 	if currentSize == offset {
 		return nil, offset, nil
 	}
 
-	// 3. New content exists - seek and read
+	// If new content exists - seek and read
 	_, err = file.Seek(offset, io.SeekStart)
 	if err != nil {
-		return nil, offset, fmt.Errorf("error seeking file: %w", err)
+		return nil, offset, errors.Wrapf(err, "Error seeking file to offset %d", offset)
 	}
 
 	var newLines []string
@@ -160,20 +158,21 @@ func readNewLines(path string, offset int64) ([]string, int64, error) {
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
-			// Remove trailing newline if present and add to list
-			if line[len(line)-1] == '\n' {
-				line = line[:len(line)-1]
+			line = strings.TrimSpace(line)
+			if line != "" {
+				if patternRegex == nil || patternRegex.MatchString(line) {
+					newLines = append(newLines, line)
+				}
 			}
-			newLines = append(newLines, line)
-		}
-		if err == io.EOF {
-			break
 		}
 		if err != nil {
-			return nil, offset, fmt.Errorf("error reading new lines: %w", err)
+			if err != io.EOF {
+				return nil, offset, errors.Wrapf(err, "Error reading file from offset %d", offset)
+			}
+			break
 		}
 	}
 
-	// New offset is the current size of the file
+	// Set new offset to the current size of the file
 	return newLines, currentSize, nil
 }

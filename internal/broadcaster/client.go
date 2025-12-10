@@ -25,7 +25,7 @@ type Client struct {
 	Send chan []byte
 }
 
-// readPump reads messages from the websocket connection (primarily for disconnects).
+// ReadPump reads messages from the websocket connection (primarily for disconnects).
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister <- c

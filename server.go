@@ -8,17 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"log-streamer/internal/fileWatcher"
 
 	"github.com/gorilla/websocket"
-)
-
-var (
-	filePath        string
-	initialLines    int
-	ServerStartTime time.Time
 )
 
 const (
@@ -59,7 +54,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveWS handles the WebSocket connection upgrade and client lifecycle.
-func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) {
+func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, filePath string, initialLines int, patternRegex *regexp.Regexp) {
 	log.Printf("WS request from %s %s", r.RemoteAddr, r.URL.Path)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -73,16 +68,20 @@ func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) {
 	client.Hub.Register <- client
 
 	// Send initial history
-	initialMessages := fileWatcher.ReadLastNLines(filePath, initialLines)
-	for _, msg := range initialMessages {
-		client.Send <- []byte(msg)
+	initialMessages, err := fileWatcher.ReadLastNLines(filePath, initialLines, patternRegex)
+	if err != nil {
+		log.Printf("Error reading initial lines: %v", err)
+	} else {
+		for _, msg := range initialMessages {
+			client.Send <- []byte(msg)
+		}
 	}
 
 	go client.WritePump()
 	go client.ReadPump()
 }
 
-func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) {
+func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, serverStartTime time.Time) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -90,7 +89,7 @@ func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) 
 
 	clientCount, linesStreamed := hub.GetMetrics()
 
-	uptime := time.Since(ServerStartTime)
+	uptime := time.Since(serverStartTime)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -101,9 +100,17 @@ func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request) 
 }
 
 func main() {
+	var (
+		filePath     string
+		initialLines int
+		patternStr   string
+	)
+	serverStartTime := time.Now()
+
 	flag.StringVar(&filePath, "file", "sample.log", "Path to the log file to tail (required)")
 	flag.IntVar(&initialLines, "lines", 10, "Number of initial lines to send (default: 10)")
 	port := flag.Int("port", 8080, "Port to listen on (default: 8080)")
+	flag.StringVar(&patternStr, "pattern", "", "`-pattern` flag to only stream lines matching a regex")
 	flag.Parse()
 
 	if filePath == "" {
@@ -121,6 +128,16 @@ func main() {
 		filePath = absPath
 	}
 
+	var patternRegex *regexp.Regexp
+	if patternStr != "" {
+		var err error
+		patternRegex, err = regexp.Compile(patternStr)
+		if err != nil {
+			log.Fatalf("Error: Invalid regex pattern provided: %v", err)
+		}
+		log.Printf("Filtering enabled with pattern: %s", patternStr)
+	}
+
 	log.Printf("Starting Real-Time Log Streamer")
 	log.Printf("File: %s", filePath)
 	log.Printf("Initial lines: %d", initialLines)
@@ -131,15 +148,15 @@ func main() {
 	go hub.Broadcast()
 
 	//Start file watcher in a goroutine
-	go fileWatcher.FileWatcher(hub, filePath, pollInterval)
+	go fileWatcher.FileWatcher(hub, filePath, pollInterval, patternRegex)
 
 	// HTTP routes
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWS(hub, w, r)
+		serveWS(hub, w, r, filePath, initialLines, patternRegex)
 	})
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		serveMetrics(hub, w, r)
+		serveMetrics(hub, w, r, serverStartTime)
 	})
 
 	// Start HTTP server
