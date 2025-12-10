@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"log-streamer/internal/fileWatcher"
@@ -54,7 +55,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveWS handles the WebSocket connection upgrade and client lifecycle.
-func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, filePath string, initialLines int, patternRegex *regexp.Regexp) {
+func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, filePaths []string, initialLines int, patternRegex *regexp.Regexp) {
 	log.Printf("WS request from %s %s", r.RemoteAddr, r.URL.Path)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -68,12 +69,14 @@ func serveWS(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, fileP
 	client.Hub.Register <- client
 
 	// Send initial history
-	initialMessages, err := fileWatcher.ReadLastNLines(filePath, initialLines, patternRegex)
-	if err != nil {
-		log.Printf("Error reading initial lines: %v", err)
-	} else {
-		for _, msg := range initialMessages {
-			client.Send <- []byte(msg)
+	for _, path := range filePaths {
+		history, err := fileWatcher.ReadLastNLines(path, initialLines, patternRegex)
+		if err != nil {
+			log.Printf("Warning: Failed to retrieve history for file %s: %v", path, err)
+			continue
+		}
+		for _, line := range history {
+			client.Send <- []byte(line)
 		}
 	}
 
@@ -101,31 +104,48 @@ func serveMetrics(hub *broadcaster.Hub, w http.ResponseWriter, r *http.Request, 
 
 func main() {
 	var (
-		filePath     string
-		initialLines int
-		patternStr   string
+		filePathStr   string
+		initialLines  int
+		patternStr    string
+		isEventDriven bool
 	)
 	serverStartTime := time.Now()
 
-	flag.StringVar(&filePath, "file", "sample.log", "Path to the log file to tail (required)")
+	flag.StringVar(&filePathStr, "file", "", "Comma-separated list of log files to tail")
 	flag.IntVar(&initialLines, "lines", 10, "Number of initial lines to send (default: 10)")
 	port := flag.Int("port", 8080, "Port to listen on (default: 8080)")
 	flag.StringVar(&patternStr, "pattern", "", "`-pattern` flag to only stream lines matching a regex")
+	flag.BoolVar(&isEventDriven, "eventDriven", false, "`-eventDriven` flag to use event-driven file watching (fsnotify) instead of polling")
 	flag.Parse()
 
-	if filePath == "" {
+	if filePathStr == "" {
 		fmt.Println("Error: -file argument is required")
 		flag.Usage()
 		os.Exit(1)
 	}
+	paths := strings.Split(filePathStr, ",")
+	filePaths := make([]string, 0, len(paths))
 
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Fatalf("Error: File does not exist: %s", filePath)
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			log.Fatalf("Error: File does not exist: %s", p)
+		}
+
+		absPath, err := filepath.Abs(p)
+		if err == nil {
+			filePaths = append(filePaths, absPath)
+		} else {
+			log.Fatalf("Error resolving path %s: %v", p, err)
+		}
 	}
 
-	absPath, err := filepath.Abs(filePath)
-	if err == nil {
-		filePath = absPath
+	if len(filePaths) == 0 {
+		log.Fatal("Error: No valid file paths were provided.")
 	}
 
 	var patternRegex *regexp.Regexp
@@ -139,7 +159,7 @@ func main() {
 	}
 
 	log.Printf("Starting Real-Time Log Streamer")
-	log.Printf("File: %s", filePath)
+	log.Printf("Files: %s", strings.Join(filePaths, ", "))
 	log.Printf("Initial lines: %d", initialLines)
 	log.Printf("Port: %d", *port)
 
@@ -148,12 +168,14 @@ func main() {
 	go hub.Broadcast()
 
 	//Start file watcher in a goroutine
-	go fileWatcher.FileWatcher(hub, filePath, pollInterval, patternRegex)
+	for _, path := range filePaths {
+		go fileWatcher.FileWatcher(hub, path, pollInterval, patternRegex, isEventDriven)
+	}
 
 	// HTTP routes
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWS(hub, w, r, filePath, initialLines, patternRegex)
+		serveWS(hub, w, r, filePaths, initialLines, patternRegex)
 	})
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		serveMetrics(hub, w, r, serverStartTime)

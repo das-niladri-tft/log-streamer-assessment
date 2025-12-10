@@ -19,9 +19,7 @@ const (
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
 	Hub *Hub
-	// The websocket connection.
 	Conn *websocket.Conn
-	// Buffered channel of outbound messages.
 	Send chan []byte
 }
 
@@ -45,7 +43,7 @@ func (c *Client) ReadPump() {
 	}
 }
 
-// writePump pumps messages from the hub to the websocket connection.
+// WritePump pumps messages from the hub to the websocket connection.
 func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
