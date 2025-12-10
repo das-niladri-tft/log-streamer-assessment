@@ -193,12 +193,17 @@ func ReadLastNLines(path string, n int, patternRegex *regexp.Regexp) ([]string, 
 	)
 
 	// Scan backward byte by byte to find the starting position of the N-th line
+	isTrailingNewlineSkipped := false
 	for cursor := fileSize - 1; cursor >= 0; cursor-- {
 		file.Seek(cursor, io.SeekStart)
 		buf := make([]byte, 1)
 		file.Read(buf)
 
 		if buf[0] == '\n' {
+			if !isTrailingNewlineSkipped && cursor == fileSize-1 {
+				isTrailingNewlineSkipped = true
+				continue
+			}
 			lineCount++
 			// Check if n-th line found
 			if lineCount == n {
