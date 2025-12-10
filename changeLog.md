@@ -7,4 +7,5 @@
 
 **Additional error fix in the skeleton project**
 - Built the `loggen.go` as it was missing in the file
-- Fixed error in `index.html`: the `connect()` existed but the code was not calling it so the status was always stuck to 'Connecting' 
+- Fixed error in `index.html`: The `connect()` existed but the code was not calling it so the status was always stuck to 'Connecting' 
+- Fixed error in `index.html`: It was unable to split the lines so the initial logs were displayed as one line, I fixed it to always split incoming messages by newline
